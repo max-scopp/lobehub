@@ -21,6 +21,8 @@ import ModelSelect from '@/features/ModelSelect';
 import ReasoningEffortSelect from '@/features/ModelSelect/ReasoningEffortSelect';
 import RunPriorityHint from '@/features/ProfileEditor/AgentUserTools/RunPriorityHint';
 import { resolveExecutionTarget } from '@/helpers/executionTarget';
+import { useServerConfigStore } from '@/store/serverConfig';
+import { serverConfigSelectors } from '@/store/serverConfig/selectors';
 import { useEffectiveAgencyConfig } from '@/hooks/useEffectiveAgencyConfig';
 import { usePermission } from '@/hooks/usePermission';
 import { useAgentStore } from '@/store/agent';
@@ -120,7 +122,13 @@ const ProfileEditor = memo(() => {
     isHeterogeneous &&
     !!heterogeneousProvider &&
     isRemoteHeterogeneousType(heterogeneousProvider.type);
-  const showCloudHeterogeneousTab = heterogeneousProvider?.type === 'claude-code';
+  // Any agent the deployment can run in the sandbox needs this tab: it is where
+  // the repos to clone and the GitHub credential live, and without it a
+  // sandbox-only agent lands on the desktop tab and is told its CLI is missing
+  // from a machine it was never going to run on.
+  const sandboxAgentTypes = useServerConfigStore(serverConfigSelectors.sandboxAgentTypes);
+  const showCloudHeterogeneousTab =
+    !!heterogeneousProvider && (sandboxAgentTypes as string[]).includes(heterogeneousProvider.type);
   const localDesktopAvailable =
     isDesktop &&
     !!heterogeneousProvider &&
