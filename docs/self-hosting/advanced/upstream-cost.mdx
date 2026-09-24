@@ -1,0 +1,108 @@
+---
+title: Honoring the cost an upstream reports in LobeHub
+description: >-
+  How LobeHub decides what a call cost, why a model behind a proxy shows up as
+  free, and how to make the proxy's own figure the one you see
+tags:
+  - LobeHub
+  - cost
+  - pricing
+  - proxy
+  - LiteLLM
+  - OpenRouter
+---
+
+# Upstream cost
+
+LobeHub prices a call from its own model catalog: it looks up the model card for
+`(model, provider)`, multiplies the rates by the tokens the provider reported,
+and stores the result as the message's `usage.cost`.
+
+That works for a model LobeHub knows. It cannot work for a model reached through
+a gateway, because the name it arrives under — `tensorx/z-ai/glm-5.3`,
+`openrouter/qwen/qwen3-235b-a22b`, or a bare alias like `memory/extract` —
+matches no model card. With no price to apply, no cost is recorded, and the
+message, the usage tray and every total built from them read **$0.00** however
+much the call actually cost.
+
+## What LobeHub does now
+
+If the upstream reports what it charged, LobeHub uses that number and skips its
+own estimate. It is read from `usage.cost` on the response (or on the final usage
+chunk of a stream), in USD:
+
+```jsonc
+{
+  "usage": {
+    "prompt_tokens": 2959,
+    "completion_tokens": 1,
+    "total_tokens": 2960,
+    "cost": 0.0008902 // ← used as-is
+  }
+}
+```
+
+Nothing to enable: it applies whenever the field is there.
+
+- A reported cost **wins over the local table**, because it is what the account
+  was actually charged — including the provider's discounts, cache pricing and
+  routing decisions, none of which a static rate card knows about.
+- A reported `0` means the call was free, and is recorded as free.
+- When nothing is reported, the local price table applies exactly as before, so
+  no built-in provider changes behavior.
+- Only a finite, non-negative number counts. A string, a `null` or a `NaN` is
+  treated as "nothing reported" rather than as zero — a quirk must not make a
+  paid call look free.
+
+`cost_details.upstream_inference_cost`, which OpenRouter sends under BYOK, is
+deliberately ignored: it is what the provider charged the gateway, not what the
+gateway charged you, so counting it would bill the call twice.
+
+## Making a proxy report it
+
+**OpenRouter** already does, and there is nothing to configure.
+
+**LiteLLM** prices every call — it has to, to charge keys and fill
+`LiteLLM_SpendLogs` — but by default only reports it in the
+`x-litellm-response-cost` response *header*, which a JSON client never sees. Two
+settings put it in the body:
+
+```yaml
+# config.yaml
+litellm_settings:
+  # Streamed answers: adds usage.cost to the final usage chunk.
+  include_cost_in_streaming_usage: true
+  callbacks:
+    # Non-streamed answers: mirrors the same cost into usage.cost.
+    - litellm_toolbelt.cost:proxy_handler_instance
+```
+
+The callback comes from
+[litellm-toolbelt](https://github.com/max-scopp/litellm-toolbelt) and also turns
+the streaming setting on by itself, so adding it alone is enough. Any other hook
+that writes a number into `usage.cost` works just as well — the field is the
+whole contract.
+
+<Callout type="info">
+  Ask for usage on streamed calls, or there is no usage object to carry a cost.
+  LobeHub sends `stream_options: { include_usage: true }` for OpenAI-compatible
+  providers already.
+</Callout>
+
+## Checking it worked
+
+The cost appears under an assistant message next to its token counts (above a
+small display threshold), and in the agent usage cards that sum those messages.
+For the raw value, with a server database:
+
+```sql
+SELECT model, usage->>'totalTokens' AS tokens, usage->>'cost' AS cost
+FROM messages
+WHERE role = 'assistant'
+ORDER BY created_at DESC
+LIMIT 5;
+```
+
+A `cost` of `null` there means nothing reported a cost and no model card matched
+the model — either point LobeHub's model id at a card that has pricing, or have
+the proxy report the figure it already knows.

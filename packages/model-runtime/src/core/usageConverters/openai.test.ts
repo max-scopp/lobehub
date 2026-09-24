@@ -716,3 +716,48 @@ describe('convertOpenAIImageUsage', () => {
     });
   });
 });
+
+describe('an upstream that priced the call itself', () => {
+  const pricing: Pricing = {
+    units: [
+      { name: 'textInput', rate: 3, strategy: 'fixed', unit: 'millionTokens' },
+      { name: 'textOutput', rate: 15, strategy: 'fixed', unit: 'millionTokens' },
+    ],
+  };
+
+  const usage = { prompt_tokens: 1_000_000, completion_tokens: 0, total_tokens: 1_000_000 };
+
+  it('reports the cost the upstream charged instead of the local estimate', () => {
+    // OpenRouter and a LiteLLM proxy both report `usage.cost`. It reflects the
+    // discounts, cache pricing and routing the local table cannot know about.
+    expect(convertOpenAIUsage({ ...usage, cost: 0.42 } as typeof usage, { pricing }).cost).toBe(
+      0.42,
+    );
+    // Same call, nothing reported: the local table still applies.
+    expect(convertOpenAIUsage(usage, { pricing }).cost).toBeCloseTo(3, 10);
+  });
+
+  it('prices a model the local table has never heard of', () => {
+    // The case that matters for a proxy: no model card, so no pricing at all.
+    expect(convertOpenAIUsage({ ...usage, cost: 0.0031 } as typeof usage).cost).toBe(0.0031);
+    expect(convertOpenAIUsage(usage).cost).toBeUndefined();
+  });
+
+  it('honours an upstream zero rather than billing a free call', () => {
+    expect(convertOpenAIUsage({ ...usage, cost: 0 } as typeof usage, { pricing }).cost).toBe(0);
+  });
+
+  it('does the same on the responses API', () => {
+    const responseUsage = {
+      input_tokens: 100,
+      output_tokens: 10,
+      total_tokens: 110,
+    } as OpenAI.Responses.ResponseUsage;
+
+    expect(
+      convertOpenAIResponseUsage({ ...responseUsage, cost: 0.125 } as typeof responseUsage, {
+        pricing,
+      }).cost,
+    ).toBe(0.125);
+  });
+});

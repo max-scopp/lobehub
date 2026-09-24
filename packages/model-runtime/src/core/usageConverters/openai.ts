@@ -4,6 +4,7 @@ import type { Pricing } from 'model-bank';
 import type OpenAI from 'openai';
 
 import type { ChatPayloadForTransformStream } from '../streams/protocol';
+import { readUpstreamCost } from './utils/upstreamCost';
 import { withUsageCost } from './utils/withUsageCost';
 
 const log = debug('lobe-cost:convertOpenAIUsage');
@@ -138,7 +139,12 @@ export const convertOpenAIUsage = (
 
   log('convertOpenAIUsage data(completion-api): %O', finalData);
 
-  return withUsageCost(finalData as ModelUsage, payload?.pricing);
+  return withUsageCost(
+    finalData as ModelUsage,
+    payload?.pricing,
+    undefined,
+    readUpstreamCost(usage),
+  );
 };
 
 export const convertOpenAIResponseUsage = (
@@ -205,7 +211,13 @@ export const convertOpenAIResponseUsage = (
 
   log('convertOpenAIResponseUsage data(response-api): %O', finalData);
 
-  return withUsageCost(finalData as ModelUsage, payload?.pricing); // Cast because we've built it to match
+  // Cast because we've built it to match
+  return withUsageCost(
+    finalData as ModelUsage,
+    payload?.pricing,
+    undefined,
+    readUpstreamCost(usage),
+  );
 };
 
 export const convertOpenAIImageUsage = (

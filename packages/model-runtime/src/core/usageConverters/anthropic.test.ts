@@ -105,3 +105,28 @@ describe('convertAnthropicUsage', () => {
     expect(usage).toBeUndefined();
   });
 });
+
+describe('an upstream that priced the call itself', () => {
+  it('reports the cost from message_delta instead of the local estimate', () => {
+    // A proxy in front of /v1/messages reports its cost on the same event that
+    // carries the final token counts.
+    const deltaEvent = {
+      delta: { stop_reason: 'end_turn' },
+      type: 'message_delta',
+      usage: { cost: 0.0042, output_tokens: 8 },
+    } as unknown as Anthropic.MessageStreamEvent;
+
+    const pricing = {
+      units: [
+        { name: 'textInput', rate: 3, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 15, strategy: 'fixed', unit: 'millionTokens' },
+      ],
+    } as const;
+
+    const usage = convertAnthropicUsage(deltaEvent, { totalInputTokens: 1_000_000 }, {
+      pricing,
+    } as any);
+
+    expect(usage?.cost).toBe(0.0042);
+  });
+});

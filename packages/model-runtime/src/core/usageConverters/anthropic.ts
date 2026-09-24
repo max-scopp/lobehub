@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import type { ModelUsage } from '@lobechat/types';
 
 import type { ChatPayloadForTransformStream } from '../streams/protocol';
+import { readUpstreamCost } from './utils/upstreamCost';
 import { withUsageCost } from './utils/withUsageCost';
 
 export const buildAnthropicInitialUsage = (
@@ -66,7 +67,17 @@ export const convertAnthropicUsage = (
     }
     case 'message_delta': {
       const usage = mergeDeltaUsage(streamContextUsage, messageEvent.usage);
-      return usage && withUsageCost(usage, payload?.pricing, payload?.pricingOptions);
+      // A proxy in front of /v1/messages reports its cost on the same
+      // `message_delta` usage that carries the final token counts.
+      return (
+        usage &&
+        withUsageCost(
+          usage,
+          payload?.pricing,
+          payload?.pricingOptions,
+          readUpstreamCost(messageEvent.usage),
+        )
+      );
     }
     default: {
       return streamContextUsage;
