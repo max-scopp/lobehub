@@ -74,7 +74,7 @@ litellm_settings:
   include_cost_in_streaming_usage: true
   callbacks:
     # Non-streamed answers: mirrors the same cost into usage.cost.
-    - litellm_toolbelt.cost:proxy_handler_instance
+    - litellm_toolbelt.cost.proxy_handler_instance
 ```
 
 The callback comes from
