@@ -8,6 +8,7 @@ export const getSandboxConfig = () => {
     runtimeEnv: {
       HETERO_SANDBOX_AGENT_TYPES: process.env.HETERO_SANDBOX_AGENT_TYPES,
       HETERO_SANDBOX_FORWARD_ENV: process.env.HETERO_SANDBOX_FORWARD_ENV,
+      HETERO_SANDBOX_RUN_TTL_SEC: process.env.HETERO_SANDBOX_RUN_TTL_SEC,
       ONLYBOXES_BASE_URL: process.env.ONLYBOXES_BASE_URL,
       ONLYBOXES_JIT_ISSUER: process.env.ONLYBOXES_JIT_ISSUER,
       ONLYBOXES_JIT_SIGNING_KEY: process.env.ONLYBOXES_JIT_SIGNING_KEY,
@@ -30,6 +31,16 @@ export const getSandboxConfig = () => {
        * server holds crosses into the box unless it is asked for by name.
        */
       HETERO_SANDBOX_FORWARD_ENV: z.preprocess(emptyStringToUndefined, z.string().optional()),
+      /**
+       * How long a sandbox run may last, in seconds: the lifetime of the token
+       * the run authenticates with. Defaults to four hours. With Onlyboxes the
+       * box's lease (`ONLYBOXES_LEASE_TTL_SEC`) has to be at least this long,
+       * or the box is destroyed under the run.
+       */
+      HETERO_SANDBOX_RUN_TTL_SEC: z.preprocess(
+        emptyStringToUndefined,
+        z.coerce.number().int().positive().optional(),
+      ),
       ONLYBOXES_BASE_URL: z.preprocess(emptyStringToUndefined, z.string().url().optional()),
       ONLYBOXES_JIT_ISSUER: z.preprocess(emptyStringToUndefined, z.string().optional()),
       ONLYBOXES_JIT_SIGNING_KEY: z.preprocess(emptyStringToUndefined, z.string().optional()),
