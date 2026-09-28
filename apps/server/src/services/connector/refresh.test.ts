@@ -18,6 +18,11 @@ vi.mock('@/server/utils/scheduleAfterResponse', () => ({
     deferred.push(work);
   }),
 }));
+const mockEnv = vi.hoisted(() => ({
+  MCP_PRIVATE_HOST_ALLOWLIST: undefined as string | undefined,
+}));
+
+vi.mock('@/envs/gateway', () => ({ gatewayEnv: mockEnv }));
 vi.mock('./sync', () => ({ syncConnectorToolsById: vi.fn().mockResolvedValue({ toolCount: 3 }) }));
 vi.mock('@/server/services/deviceGateway', () => ({ deviceGateway: { isConfigured: false } }));
 
@@ -46,6 +51,7 @@ beforeEach(() => {
   deferred.length = 0;
   vi.mocked(syncConnectorToolsById).mockResolvedValue({ toolCount: 3 });
   (deviceGateway as any).isConfigured = false;
+  mockEnv.MCP_PRIVATE_HOST_ALLOWLIST = undefined;
 });
 
 describe('buildLastSyncedAtMap', () => {
@@ -137,6 +143,23 @@ describe('scheduleStaleConnectorToolsRefresh — eligibility', () => {
   it('still refreshes local endpoints when self-hosted (no device gateway)', async () => {
     // A self-hosted server may share a LAN with the endpoint — the cloud-only
     // skip must not fire there.
+    const id = nextId();
+    scheduleStaleConnectorToolsRefresh(
+      [{ id, mcpConnectionType: 'http', mcpServerUrl: 'http://192.168.1.10:8080/mcp' }],
+      new Map(),
+      ctx,
+      NOW,
+    );
+    await flushDeferred();
+    expect(syncConnectorToolsById).toHaveBeenCalledWith(id, ctx);
+  });
+
+  it('still refreshes an allowlisted private endpoint on a cloud deployment', async () => {
+    // Refresh and exec must agree. Skipping the refresh while the call itself
+    // succeeds would silently freeze this connector's tool list on whatever it
+    // held at the moment the allowlist entry was added.
+    (deviceGateway as any).isConfigured = true;
+    mockEnv.MCP_PRIVATE_HOST_ALLOWLIST = '192.168.1.10';
     const id = nextId();
     scheduleStaleConnectorToolsRefresh(
       [{ id, mcpConnectionType: 'http', mcpServerUrl: 'http://192.168.1.10:8080/mcp' }],

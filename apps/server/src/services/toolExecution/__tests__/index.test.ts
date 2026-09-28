@@ -8,6 +8,11 @@ import { getScopedOnlineDevices } from '@/server/services/deviceGateway/scopedDe
 
 import { ToolExecutionService } from '../index';
 
+const mockEnv = vi.hoisted(() => ({
+  MCP_PRIVATE_HOST_ALLOWLIST: undefined as string | undefined,
+}));
+
+vi.mock('@/envs/gateway', () => ({ gatewayEnv: mockEnv }));
 vi.mock('@/server/services/deviceGateway', () => ({
   deviceGateway: {
     executeMcpCall: vi.fn(),
@@ -396,6 +401,7 @@ describe('ToolExecutionService', () => {
     beforeEach(() => {
       vi.clearAllMocks();
       (deviceGateway as any).isConfigured = true;
+      mockEnv.MCP_PRIVATE_HOST_ALLOWLIST = undefined;
       vi.mocked(deviceGateway.executeMcpCall).mockResolvedValue({
         content: 'ok',
         success: true,
@@ -577,6 +583,27 @@ describe('ToolExecutionService', () => {
       expect(callTool).not.toHaveBeenCalled();
       expect(result.success).toBe(false);
       expect((result.error as any)?.code).toBe('MCP_DEVICE_UNAVAILABLE');
+    });
+
+    it('runs an allowlisted private endpoint in-process instead of tunneling', async () => {
+      // A gateway being configured does not mean the server is in a cloud. On a
+      // homelab install it shares a LAN with its MCP servers, so the private URL
+      // is reachable in-process and must not be sent down a device tunnel.
+      mockEnv.MCP_PRIVATE_HOST_ALLOWLIST = '192.168.1.10';
+      const callTool = vi.fn().mockResolvedValue({ ok: true });
+      const service = makeService({ callTool });
+
+      const result = await service.executeTool(
+        mcpPayload,
+        contextWith(
+          { name: 'my-mcp', type: 'http', url: 'http://192.168.1.10:8080/mcp' },
+          { activeDeviceId: 'device-1' },
+        ),
+      );
+
+      expect(callTool).toHaveBeenCalledTimes(1);
+      expect(deviceGateway.executeMcpCall).not.toHaveBeenCalled();
+      expect(result.success).toBe(true);
     });
 
     it('fails closed when no serverDB is available to apply device visibility', async () => {

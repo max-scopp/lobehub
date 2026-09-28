@@ -6,6 +6,7 @@ export const getGatewayConfig = () => {
     runtimeEnv: {
       DEVICE_GATEWAY_SERVICE_TOKEN: process.env.DEVICE_GATEWAY_SERVICE_TOKEN,
       DEVICE_GATEWAY_URL: process.env.DEVICE_GATEWAY_URL,
+      MCP_PRIVATE_HOST_ALLOWLIST: process.env.MCP_PRIVATE_HOST_ALLOWLIST,
       MESSAGE_GATEWAY_ENABLED: process.env.MESSAGE_GATEWAY_ENABLED,
       MESSAGE_GATEWAY_NODE_PLATFORMS: process.env.MESSAGE_GATEWAY_NODE_PLATFORMS,
       MESSAGE_GATEWAY_NODE_PULL_TOKEN: process.env.MESSAGE_GATEWAY_NODE_PULL_TOKEN,
@@ -17,6 +18,26 @@ export const getGatewayConfig = () => {
     server: {
       DEVICE_GATEWAY_SERVICE_TOKEN: z.string().optional(),
       DEVICE_GATEWAY_URL: z.string().url().optional(),
+      /**
+       * Comma-separated hostnames of private-network MCP endpoints **this server
+       * can reach itself**, which therefore are not "device-only" and must not be
+       * forced down the device tunnel.
+       *
+       * `DEVICE_GATEWAY_URL` being set only says a gateway exists; it does not say
+       * where the server runs. On a cloud deployment a `192.168.x.x` connector is
+       * genuinely unreachable from the server, so it is treated as device-only. On
+       * a self-hosted box that shares a LAN with its MCP servers, the very same URL
+       * is a plain HTTP hop away and the classification is a false positive that
+       * blocks the tool with a message about a machine that is not involved.
+       *
+       * Naming the hosts is the whole point: an unlisted private address keeps its
+       * device-only protection, so a user-supplied connector URL still cannot steer
+       * the server at the rest of the private range. Values are bare hostnames —
+       * no scheme, port or path — so one entry covers every port a host serves.
+       *
+       * Set this on a homelab/LAN install. Leave it unset on cloud.
+       */
+      MCP_PRIVATE_HOST_ALLOWLIST: z.string().optional(),
       MESSAGE_GATEWAY_ENABLED: z.string().optional(),
       /**
        * Comma-separated platform ids whose gateway connections live on the

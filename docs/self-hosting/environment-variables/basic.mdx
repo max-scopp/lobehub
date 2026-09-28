@@ -217,6 +217,37 @@ SSRF_ALLOW_IP_ADDRESS_LIST=192.168.1.100,10.0.0.50
 - Allow access to internal API gateway: `10.0.0.50`
 - Allow access to internal documentation server: `172.16.0.10`
 
+### `MCP_PRIVATE_HOST_ALLOWLIST`
+
+- Type: Optional
+- Description: Hosts of private-network MCP servers that **this LobeHub server can reach itself**, as a comma-separated list of bare hostnames. An MCP connector pointing at one of them is called in-process instead of being treated as reachable only from the user's own machine.
+- Default: -
+- Example: `192.168.1.10,litellm.lan`
+
+**Why you might need it**:
+
+When a device gateway is configured, LobeHub treats any MCP server on a private IP as
+*device-only* — something only the user's own machine can reach — and routes the call through
+a desktop device instead. That is right on a cloud deployment, where the server genuinely
+cannot reach `192.168.x.x`. On a self-hosted server that shares a LAN with its MCP servers, the
+same URL is a plain HTTP hop away, and the tool call fails with a message about a machine that
+is not involved.
+
+<Callout type="info">
+  Entries are bare hostnames — no scheme, port or path — so one entry covers every port a host
+  serves. Matching is an exact, case-insensitive hostname comparison, so an unlisted private
+  address keeps its device-only protection.
+</Callout>
+
+```bash
+# A homelab server that shares a LAN with its MCP servers
+MCP_PRIVATE_HOST_ALLOWLIST=192.168.1.10,192.168.1.11
+```
+
+**Related**: this is separate from `SSRF_ALLOW_PRIVATE_IP_ADDRESS`, which governs outbound
+*fetches* of user-supplied media and web URLs. This variable only affects which MCP endpoints
+LobeHub considers reachable from its own network position.
+
 ### `ASSET_BASE_URL`
 
 - Type: Optional

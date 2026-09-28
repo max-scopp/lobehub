@@ -1,7 +1,6 @@
-import { isLocalOrPrivateUrl } from '@lobechat/utils';
-
-import { ConnectorMcpConnectionType, ConnectorToolPermission } from '@/database/schemas';
+import { ConnectorToolPermission } from '@/database/schemas';
 import { deviceGateway } from '@/server/services/deviceGateway';
+import { isDeviceOnlyMcpEndpoint } from '@/server/services/deviceGateway/mcpReachability';
 import { mcpService } from '@/server/services/mcp';
 
 import { buildLastSyncedAtMap, scheduleStaleConnectorToolsRefresh } from './refresh';
@@ -87,12 +86,16 @@ export const callConnectorToolById = async (
   // error: on a cloud deployment (device gateway configured) the server can
   // never reach a stdio binary or a localhost/LAN endpoint. Those calls run on
   // the user's device via the gateway-mode tunnel — this path is only hit when
-  // the user manually turned gateway mode off. Gated so a self-hosted server
-  // that shares a LAN with the endpoint keeps working.
-  const isDeviceOnlyEndpoint =
-    connector.mcpConnectionType === ConnectorMcpConnectionType.stdio ||
-    (!!connector.mcpServerUrl && isLocalOrPrivateUrl(connector.mcpServerUrl));
-  if (deviceGateway.isConfigured && isDeviceOnlyEndpoint) {
+  // the user manually turned gateway mode off. A self-hosted server that shares
+  // a LAN with the endpoint keeps working, as does a private host the operator
+  // allowlisted (MCP_PRIVATE_HOST_ALLOWLIST). The rule is shared with the
+  // background-refresh and toolExecution paths so the three cannot disagree.
+  const isDeviceOnlyEndpoint = isDeviceOnlyMcpEndpoint(
+    connector.mcpConnectionType,
+    connector.mcpServerUrl,
+    deviceGateway.isConfigured,
+  );
+  if (isDeviceOnlyEndpoint) {
     throw new ConnectorToolCallError(
       'BAD_REQUEST',
       `Connector '${connector.name}' points at an MCP endpoint that only your machine can reach (stdio or local network). ` +

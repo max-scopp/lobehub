@@ -1,5 +1,5 @@
 import { type ChatToolPayload } from '@lobechat/types';
-import { isLocalOrPrivateUrl, safeParseJSON } from '@lobechat/utils';
+import { safeParseJSON } from '@lobechat/utils';
 import debug from 'debug';
 
 import { ConnectorToolPermission } from '@/database/schemas';
@@ -15,6 +15,7 @@ import {
 } from '@/libs/mcp/connectorPermissionCheck';
 import { deviceGateway } from '@/server/services/deviceGateway';
 import { resolveDeviceDispatchAuthorizationFailure } from '@/server/services/deviceGateway/dispatchAuthorization';
+import { isDeviceOnlyMcpEndpoint } from '@/server/services/deviceGateway/mcpReachability';
 import { getScopedOnlineDevices } from '@/server/services/deviceGateway/scopedDevices';
 import { contentBlocksToString } from '@/server/services/mcp/contentProcessor';
 import {
@@ -263,13 +264,17 @@ export class ToolExecutionService {
       // deployment), such calls MUST tunnel to a device — with no reachable
       // device, fail fast with an actionable error instead of spawning the
       // command / fetching the private URL on the server (the same rule the
-      // classic-path guard in connector exec enforces). Standalone Electron /
-      // self-host (no gateway) falls through to the in-process MCP service
-      // below, which legitimately runs on the user's machine or LAN.
-      const isDeviceOnlyMcp =
-        mcpParams.type === 'stdio' ||
-        (mcpParams.type === 'http' && isLocalOrPrivateUrl(mcpParams.url));
-      if (isDeviceOnlyMcp && deviceGateway.isConfigured) {
+      // classic-path guard in connector exec enforces — hence the shared
+      // predicate, not a third copy of it). Standalone Electron / self-host
+      // (no gateway) falls through to the in-process MCP service below, which
+      // legitimately runs on the user's machine or LAN, as does a private host
+      // the operator allowlisted (MCP_PRIVATE_HOST_ALLOWLIST).
+      const isDeviceOnlyMcp = isDeviceOnlyMcpEndpoint(
+        mcpParams.type,
+        mcpParams.url,
+        deviceGateway.isConfigured,
+      );
+      if (isDeviceOnlyMcp) {
         const tunnelTarget = context.userId
           ? await this.resolveMcpTunnelTarget(context)
           : undefined;
