@@ -16,6 +16,19 @@ describe('isExecutionTime', () => {
     // day. The fix is to dedup against today's scheduled target time, so a
     // pre-target manual run no longer eats the upcoming tick.
 
+    it('does not run a daily task again when the early tolerance tick already ran it', () => {
+      // Dispatcher every 5 minutes: the 07:25 tick is within tolerance of a
+      // 07:30 schedule and runs it; the 07:30 tick must not run it twice.
+      expect(
+        isExecutionTime({
+          cronPattern: '30 7 * * *',
+          currentTime: new Date('2026-09-30T07:30:03+02:00'),
+          lastExecutedAt: new Date('2026-09-30T07:25:11+02:00'),
+          timezone: 'Europe/Berlin',
+        }),
+      ).toBe(false);
+    });
+
     it('fires daily 21:00 tick even if user manually triggered at 18:00 (UTC)', () => {
       // Daily at 21:00 UTC; manual run earlier today at 18:00.
       expect(

@@ -89,7 +89,11 @@ export const isExecutionTime = (input: IsExecutionTimeInput): boolean => {
         .minute(targetMinute)
         .second(0)
         .millisecond(0);
-      if (last.getTime() >= todaysTarget.valueOf()) {
+      // A run inside the tolerance before the target IS today's run: the
+      // minute check below accepts a tick up to `toleranceMinutes` early, so
+      // with a 5-minute dispatcher the 07:25 tick ran a 07:30 task and the
+      // 07:30 tick, seeing a run before 07:30, ran it again.
+      if (last.getTime() >= todaysTarget.valueOf() - toleranceMinutes * 60_000) {
         return false;
       }
     }
@@ -113,7 +117,8 @@ export const isExecutionTime = (input: IsExecutionTimeInput): boolean => {
         .minute(targetMinute)
         .second(0)
         .millisecond(0);
-      const lastCoveredToday = new Date(lastExecutedAt).getTime() >= todaysTarget.valueOf();
+      const lastCoveredToday =
+        new Date(lastExecutedAt).getTime() >= todaysTarget.valueOf() - toleranceMinutes * 60_000;
       shouldCatchUp = !lastCoveredToday && hour > targetHour;
     } else {
       shouldCatchUp = hour > targetHour;
