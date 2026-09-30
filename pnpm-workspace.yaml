@@ -1,4 +1,10 @@
-lockfile: false
+# deploy/homelab builds a fixed release tag, so it keeps a lockfile: without
+# one every build resolves whatever is newest, and on 2026-09-30 that broke it
+# twice (@upstash/qstash 2.12.0 vs its patch, @lobehub/ui 5.51 dropping an
+# export). The lockfile was first resolved as of the live build (2026-09-25
+# ~22:15 UTC) through minimumReleaseAge, with the @lobehub exclusion removed.
+lockfile: true
+minimumReleaseAge: 6400
 resolutionMode: highest
 dedupePeerDependents: true
 ignoreWorkspaceRootCheck: true
@@ -26,9 +32,6 @@ packages:
   - apps/server
   - apps/share
   - apps/workbench
-
-minimumReleaseAgeExclude:
-  - '@lobehub/*'
 
 # Build scripts run one at a time. Several peer-variant copies of
 # @lobehub/editor resolve in this workspace and every copy's postinstall
