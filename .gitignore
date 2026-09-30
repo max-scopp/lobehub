@@ -145,7 +145,7 @@ i18n-unused-keys-report.json
 .vitest-reports
 .vitest/
 
-pnpm-lock.yaml
+# deploy/homelab keeps its lockfile (see pnpm-workspace.yaml)
 !apps/desktop/pnpm-lock.yaml
 .turbo
 spaHtmlTemplates.ts
