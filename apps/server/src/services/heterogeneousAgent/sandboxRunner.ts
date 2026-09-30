@@ -29,7 +29,7 @@ export interface SandboxRunParams {
    * to re-read topic.metadata.runningOperation on every cold Lambda start. */
   assistantMessageId: string;
   /**
-   * The user's `kv-env` credentials as environment variables. OAuth tokens
+   * The user's KV credentials (env and header) as environment variables. OAuth tokens
    * never leave Market, so they are not among them.
    */
   credsEnv?: Record<string, string>;

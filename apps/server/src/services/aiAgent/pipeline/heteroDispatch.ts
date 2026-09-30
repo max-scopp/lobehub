@@ -58,6 +58,9 @@ import { heteroOperationCapabilities } from './heteroOperationCapabilities';
 
 const log = debug('lobe-server:ai-agent-service');
 
+/** A GitHub token by its prefix: classic, OAuth, app, refresh or fine-grained. */
+const GITHUB_TOKEN_PATTERN = /^(?:(?:bearer|token)\s+)?(?:ghp|gho|ghu|ghs|ghr|github_pat)_\w{20,}$/i;
+
 export interface HeteroDispatchDeps {
   bindTopicWorkingDirectory: (params: {
     config?: WorkingDirConfig;
@@ -421,11 +424,13 @@ export const dispatchHeteroAgent = async (
     // Only KV credentials leave Market in the clear: `get` decrypts them. An
     // OAuth connection's token (the LobeHub GitHub app among them) stays in
     // Market, whose `inject` writes the real value into its own sandbox only
-    // and answers with masked ones. So the sandbox gets every `kv-env`
-    // credential under the name Market would inject it as, and a GitHub token
-    // stored as one stands in when the GitHub credential is an OAuth app.
+    // and answers with masked ones. So the sandbox gets every KV credential
+    // under the name Market would inject it as, and a GitHub token stored as
+    // one stands in when the GitHub credential is an OAuth app. Header
+    // credentials count too: a plain token is often stored as one, and in the
+    // box it is an env var like any other, named by its payload key.
     const env: Record<string, string> = {};
-    for (const kv of creds.filter((c) => c.type === 'kv-env')) {
+    for (const kv of creds.filter((c) => c.type === 'kv-env' || c.type === 'kv-header')) {
       const full = await credsAccessor.get(kv.id, { decrypt: true });
       const values: Record<string, string> = (full as any).plaintext ?? {};
       const envMapping: Record<string, string> = kv.manifest?.envMapping ?? {};
@@ -434,7 +439,15 @@ export const dispatchHeteroAgent = async (
       }
     }
     credsEnv = env;
-    githubToken ??= env.GITHUB_TOKEN ?? env.GH_TOKEN ?? env.GITHUB_ACCESS_TOKEN ?? env.GITHUB_PAT;
+    githubToken ??=
+      env.GITHUB_TOKEN ??
+      env.GH_TOKEN ??
+      env.GITHUB_ACCESS_TOKEN ??
+      env.GITHUB_PAT ??
+      Object.values(env).find((value) => GITHUB_TOKEN_PATTERN.test(value));
+    // A header credential may carry its scheme (`Bearer ghp_…`); git and gh
+    // want the bare token.
+    githubToken = githubToken?.replace(/^(?:bearer|token)\s+/i, '');
   } catch (err) {
     log('execAgent: failed to resolve credentials: %O', err);
   }
