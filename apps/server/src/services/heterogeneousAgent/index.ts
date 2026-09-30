@@ -30,8 +30,12 @@ import {
   StaleHeteroOperationError,
 } from './HeterogeneousPersistenceHandler';
 import { HeteroTraceRecorder } from './HeteroTraceRecorder';
+import { readRunSpend, revokeRunKey } from './litellmRunKey';
 
 const log = debug('lobe-server:hetero-agent-service');
+
+/** LiteLLM flushes spend to its database every ~10s; wait well past that. */
+const RUN_KEY_SETTLE_DELAY_MS = 30_000;
 
 export type HeterogeneousAgentType = LocalHeterogeneousAgentType;
 
@@ -618,6 +622,12 @@ export class HeterogeneousAgentService {
       log('heteroFinish: trace finalize failed (non-fatal): %O', err);
     }
 
+    this.scheduleRunKeySettlement({
+      assistantMessageId,
+      operationId,
+      stepCost: totals?.totalCost,
+    });
+
     let goalContent: unknown = '';
     if (completionReason === 'done') {
       // Guarantee the task's verify plan is DURABLY persisted before the gate
@@ -698,6 +708,47 @@ export class HeterogeneousAgentService {
       completionReason,
     );
     log('heteroFinish: dispatched completion lifecycle for op=%s result=%s', operationId, result);
+  }
+
+  /**
+   * Record what LiteLLM billed a sandbox run that had a key of its own.
+   *
+   * The CLI's step costs are its own estimate, and zero for a model it has no
+   * price for (a router such as `code/auto`). The run key's spend is exact, but
+   * LiteLLM writes spend in batches, so it is read after a delay instead of at
+   * finish. The difference to the step costs lands on the operation row and on
+   * the final assistant message, so the per-message usage tray and the row
+   * agree. The key is deleted afterwards; its calls stay in LiteLLM's logs.
+   */
+  private scheduleRunKeySettlement(params: {
+    assistantMessageId?: string;
+    operationId: string;
+    stepCost?: number;
+  }): void {
+    const { assistantMessageId, operationId, stepCost } = params;
+
+    const settle = async () => {
+      const spend = await readRunSpend(operationId);
+      if (spend === undefined) return;
+
+      const delta = spend - (stepCost ?? 0);
+      if (delta > 0) {
+        await this.agentOperationModel.addBilledCost(operationId, delta);
+        if (assistantMessageId) {
+          const message = await this.messageModel.findById(assistantMessageId);
+          const usage = (message?.usage ?? {}) as Record<string, any>;
+          await this.messageModel.update(assistantMessageId, {
+            usage: { ...usage, cost: (typeof usage.cost === 'number' ? usage.cost : 0) + delta },
+          } as any);
+        }
+      }
+      log('heteroFinish: op=%s billed $%s (steps reported $%s)', operationId, spend, stepCost ?? 0);
+      await revokeRunKey(operationId);
+    };
+
+    setTimeout(() => {
+      settle().catch((err) => log('heteroFinish: run key settlement failed op=%s: %O', operationId, err));
+    }, RUN_KEY_SETTLE_DELAY_MS).unref?.();
   }
 
   /**

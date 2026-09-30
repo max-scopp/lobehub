@@ -398,6 +398,7 @@ export const dispatchHeteroAgent = async (
   // standard 'github' key (LobeHub OAuth connector default); agent config can
   // override via GITHUB_CRED_KEY.
   let githubToken: string | undefined;
+  let credsEnv: Record<string, string> | undefined;
   const githubCredKey =
     agentConfig.agencyConfig?.heterogeneousProvider?.env?.GITHUB_CRED_KEY ?? 'github';
   try {
@@ -408,14 +409,33 @@ export const dispatchHeteroAgent = async (
       ? marketService.market.organizations.creds({ workspaceId: deps.workspaceId })
       : marketService.market.creds;
     const list = await credsAccessor.list();
-    const cred = list.data?.find((c: { key: string }) => c.key === githubCredKey);
+    const creds: { id: number; key: string }[] = list.data ?? [];
+    const cred = creds.find((c) => c.key === githubCredKey);
     if (cred) {
       const full = await credsAccessor.get(cred.id, { decrypt: true });
       const vals = (full as any).plaintext ?? (full as any).values ?? {};
       githubToken = vals.access_token ?? vals.token;
     }
+
+    // `get` decrypts KV credentials only. An OAuth connection (the LobeHub
+    // GitHub app among them) hands its token out through `inject` alone, which
+    // also resolves workspace credentials from the service token. Taking every
+    // credential here gives a coding agent the same services a chat agent
+    // reaches through `lobe-creds`. `sandbox: false` because the values go to
+    // our own sandbox, not Market's.
+    if (creds.length > 0) {
+      const injected = await marketService.market.creds.inject({
+        keys: creds.map((c) => c.key),
+        sandbox: false,
+        topicId,
+        userId: deps.userId,
+      });
+      credsEnv = injected.credentials?.env;
+      const githubEnvName = `${githubCredKey.toUpperCase().replaceAll(/\W/g, '_')}_ACCESS_TOKEN`;
+      githubToken ??= credsEnv?.[githubEnvName];
+    }
   } catch (err) {
-    log('execAgent: failed to resolve GitHub token: %O', err);
+    log('execAgent: failed to resolve credentials: %O', err);
   }
 
   // Recovery history is reserved for the CLI's retry without native resume.
@@ -1105,6 +1125,9 @@ export const dispatchHeteroAgent = async (
         ...heteroParams,
         agentType: heteroType,
         args: heteroExecArgs,
+        // Only the sandbox gets every credential; device runs keep the GitHub
+        // token alone, as before.
+        credsEnv,
         jwt: sandboxJwt,
         marketService,
         workspaceId: deps.workspaceId,

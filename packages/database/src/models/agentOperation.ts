@@ -257,6 +257,22 @@ export class AgentOperationModel {
   }
 
   /**
+   * Add cost the provider billed after the operation completed, on top of what
+   * completion recorded. A heterogeneous sandbox run learns its exact cost from
+   * its LiteLLM key only once the proxy has flushed the run's last calls.
+   * An increment, so any child rollup already in `totalCost` stays.
+   */
+  async addBilledCost(operationId: string, delta: number): Promise<boolean> {
+    const [row] = await this.db
+      .update(agentOperations)
+      .set({ totalCost: sql`coalesce(${agentOperations.totalCost}, 0) + ${delta}` })
+      .where(and(eq(agentOperations.id, operationId), this.ownership()))
+      .returning({ id: agentOperations.id });
+
+    return Boolean(row);
+  }
+
+  /**
    * Persist provider enqueue acknowledgement without replacing other runtime
    * metadata. The provenance request id is checked in SQL so a stale/colliding
    * operation can never be marked scheduled by another intervention.

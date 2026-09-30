@@ -38,6 +38,12 @@ vi.mock('@/server/services/sandbox', () => ({
   })),
 }));
 
+const { mockMintRunKey } = vi.hoisted(() => ({
+  mockMintRunKey: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../litellmRunKey', () => ({ mintRunKey: mockMintRunKey }));
+
 describe('spawnHeteroSandbox', () => {
   beforeEach(() => {
     mockCallTool.mockClear();
@@ -159,6 +165,106 @@ describe('spawnHeteroSandbox forwarded environment', () => {
     await run();
 
     expect(lastCommand()).not.toContain('NOT_ALLOWLISTED');
+  });
+});
+
+describe('spawnHeteroSandbox credentials', () => {
+  const run = (extra: { credsEnv?: Record<string, string>; githubToken?: string }) =>
+    spawnHeteroSandbox({
+      agentType: 'opencode',
+      assistantMessageId: 'msg-1',
+      jwt: 'jwt',
+      marketService: {} as any,
+      operationId: 'op-1',
+      prompt: 'hi',
+      topicId: 'topic-1',
+      userId: 'user-1',
+      ...extra,
+    });
+
+  const lastCommand = () => mockCallTool.mock.calls.at(-1)?.[1].command as string;
+
+  beforeEach(() => {
+    mockCallTool.mockClear();
+    mockCallTool.mockResolvedValue({ success: true });
+  });
+
+  it('hands every credential to the run and writes it to ~/.creds/env', async () => {
+    await run({ credsEnv: { LINEAR_API_KEY: "li'n", SLACK_ACCESS_TOKEN: 'xoxb' } });
+
+    const command = lastCommand();
+    expect(command).toContain("LINEAR_API_KEY='li'\\''n'");
+    expect(command).toContain("SLACK_ACCESS_TOKEN='xoxb'");
+    expect(command).toContain('> ~/.creds/env');
+    expect(command).not.toContain('gh auth');
+  });
+
+  it('drops credential names that are not shell identifiers', async () => {
+    await run({ credsEnv: { 'BAD NAME;rm': 'x', GOOD: 'y' } });
+
+    expect(lastCommand()).not.toContain('BAD NAME');
+    expect(lastCommand()).toContain("GOOD='y'");
+  });
+
+  it('sets gh and git up to commit and push with a GitHub token', async () => {
+    await run({ githubToken: 'gho_abc' });
+
+    const command = lastCommand();
+    expect(command).toContain("GITHUB_TOKEN='gho_abc'");
+    expect(command).toContain("GH_TOKEN='gho_abc'");
+    expect(command).toContain('gh auth setup-git');
+    expect(command).toContain('git config --global user.email');
+  });
+});
+
+describe('spawnHeteroSandbox run key', () => {
+  const run = () =>
+    spawnHeteroSandbox({
+      agentType: 'opencode',
+      assistantMessageId: 'msg-1',
+      jwt: 'jwt',
+      marketService: {} as any,
+      operationId: 'op-1',
+      prompt: 'hi',
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+  const lastCommand = () => mockCallTool.mock.calls.at(-1)?.[1].command as string;
+
+  beforeEach(() => {
+    mockCallTool.mockClear();
+    mockCallTool.mockResolvedValue({ success: true });
+    process.env.LITELLM_API_KEY = 'sk-shared';
+    forwardEnv('LITELLM_API_KEY');
+  });
+
+  afterEach(() => {
+    mockMintRunKey.mockResolvedValue(undefined);
+    delete process.env.LITELLM_API_KEY;
+    forwardEnv(undefined);
+  });
+
+  it('keeps the shared key when no run key is minted', async () => {
+    await run();
+
+    expect(lastCommand()).toContain("LITELLM_API_KEY='sk-shared'");
+    expect(lastCommand()).not.toContain('LOBEHUB_RUN_BUDGET_USD');
+  });
+
+  it('puts the run key after the shared one, so it wins, with its budget', async () => {
+    mockMintRunKey.mockResolvedValue({ budgetUsd: 5, key: 'sk-run' });
+
+    await run();
+
+    const command = lastCommand();
+    expect(command.indexOf("LITELLM_API_KEY='sk-run'")).toBeGreaterThan(
+      command.indexOf("LITELLM_API_KEY='sk-shared'"),
+    );
+    expect(command).toContain("LOBEHUB_RUN_BUDGET_USD='5'");
+    expect(mockMintRunKey).toHaveBeenCalledWith(
+      expect.objectContaining({ operationId: 'op-1', topicId: 'topic-1' }),
+    );
   });
 });
 

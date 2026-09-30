@@ -14,6 +14,8 @@ import { sandboxEnv } from '@/envs/sandbox';
 import type { MarketService } from '@/server/services/market';
 import { createSandboxService } from '@/server/services/sandbox';
 
+import { mintRunKey } from './litellmRunKey';
+
 const log = debug('lobe-server:hetero-sandbox-runner');
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
@@ -26,6 +28,11 @@ export interface SandboxRunParams {
    * the CLI can pass it through the heteroIngest payload, removing the need for the server
    * to re-read topic.metadata.runningOperation on every cold Lambda start. */
   assistantMessageId: string;
+  /**
+   * The user's credentials as environment variables (KV values and OAuth
+   * access tokens), the same set a chat agent reaches through `lobe-creds`.
+   */
+  credsEnv?: Record<string, string>;
   cwd?: string;
   /** GitHub OAuth token for cloning private repos. */
   githubToken?: string;
@@ -117,30 +124,59 @@ function repoToLocalDir(repo: string): string {
   return raw.replaceAll(/[^\w.-]/g, '');
 }
 
+const ENV_NAME = /^[A-Z_a-z]\w*$/;
+
 /**
- * Write GitHub credentials into the sandbox in the same format produced by
- * `injectCredsToSandbox(["github"])` so CC can source them from sub-shells:
- *
- *   source ~/.creds/env          # exports GITHUB_ACCESS_TOKEN
- *   echo $GITHUB_ACCESS_TOKEN | gh auth login --hostname github.com --with-token
- *
- * Also authenticates the `gh` CLI upfront so all `gh` commands work out of
- * the box without CC having to call inject first.
- *
- * Returns null when no token is available.
+ * Environment lines for the user's credentials, `NAME='value'` each. Names
+ * that are not valid shell identifiers are dropped rather than quoted, since
+ * they could not be exported anyway.
  */
-function buildCredsSetupScript(githubToken?: string): string | null {
-  if (!githubToken) return null;
-  const tokenArg = shellQuote(githubToken);
-  return [
+const buildCredsEnvAssignments = (credsEnv?: Record<string, string>): string[] =>
+  Object.entries(credsEnv ?? {})
+    .filter(([name, value]) => ENV_NAME.test(name) && typeof value === 'string' && value)
+    .map(([name, value]) => `${name}=${shellQuote(value)}`);
+
+/**
+ * Write the user's credentials into the sandbox in the same format produced by
+ * `injectCredsToSandbox`, so an agent can source them from sub-shells:
+ *
+ *   set -a; . ~/.creds/env; set +a   # GITHUB_ACCESS_TOKEN and every other cred
+ *
+ * With a GitHub token it also authenticates the `gh` CLI, makes it git's
+ * credential helper so a plain `git push` works, and gives git the token
+ * owner's identity, so the agent can commit and push without setup of its own.
+ *
+ * Returns null when there are no credentials.
+ */
+function buildCredsSetupScript(
+  githubToken?: string,
+  credsEnv?: Record<string, string>,
+): string | null {
+  const lines = buildCredsEnvAssignments({
+    ...credsEnv,
+    ...(githubToken && { GITHUB_ACCESS_TOKEN: githubToken }),
+  });
+  if (lines.length === 0) return null;
+
+  const steps = [
     'mkdir -p ~/.creds',
-    // Write GITHUB_ACCESS_TOKEN matching the injectCredsToSandbox oauth naming scheme
-    `printf 'GITHUB_ACCESS_TOKEN=%s\\n' ${tokenArg} > ~/.creds/env`,
-    // Pre-authenticate gh CLI so CC can use it immediately (gh also picks up
-    // GITHUB_TOKEN from env, but explicit login ensures ~/.config/gh/hosts.yml
-    // is populated for cases where env is reset in a sub-shell)
-    `echo ${tokenArg} | gh auth login --hostname github.com --with-token 2>/dev/null || true`,
-  ].join(' && \\\n');
+    `printf '%s\\n' ${lines.map(shellQuote).join(' ')} > ~/.creds/env`,
+    'chmod 600 ~/.creds/env',
+  ];
+  if (githubToken) {
+    const tokenArg = shellQuote(githubToken);
+    steps.push(
+      // gh also reads GITHUB_TOKEN from env, but an explicit login populates
+      // ~/.config/gh/hosts.yml for sub-shells whose env was reset.
+      `{ echo ${tokenArg} | gh auth login --hostname github.com --with-token 2>/dev/null || true; }`,
+      '{ gh auth setup-git 2>/dev/null || true; }',
+      // Commits carry the token owner's name and noreply address unless the
+      // image already configured an identity.
+      `{ git config --global user.name >/dev/null || git config --global user.name "$(GH_TOKEN=${tokenArg} gh api user --jq '.name // .login' 2>/dev/null)" || true; }`,
+      `{ git config --global user.email >/dev/null || git config --global user.email "$(GH_TOKEN=${tokenArg} gh api user --jq '"\\(.id)+\\(.login)@users.noreply.github.com"' 2>/dev/null)" || true; }`,
+    );
+  }
+  return steps.join(' && \\\n');
 }
 
 /**
@@ -190,6 +226,7 @@ export async function spawnHeteroSandbox(params: SandboxRunParams): Promise<void
     agentType,
     args: extraArgs,
     assistantMessageId,
+    credsEnv,
     githubToken,
     jwt,
     marketService,
@@ -249,20 +286,34 @@ export async function spawnHeteroSandbox(params: SandboxRunParams): Promise<void
   // (e.g. a cloudflare tunnel). APP_URL is NOT used here because it's tied to
   // auth callbacks and must stay as localhost in dev.
   const serverUrl = process.env.LOBEHUB_HETERO_SERVER_URL ?? appEnv.APP_URL;
+  // The run's own LiteLLM key replaces a forwarded shared one, so it goes
+  // after the forwarded env: in `A=1 A=2 cmd` the last assignment wins.
+  const runKey = await mintRunKey({
+    operationId,
+    topicId,
+    ttlSec: sandboxEnv.HETERO_SANDBOX_RUN_TTL_SEC ?? DEFAULT_SANDBOX_RUN_TTL_SEC,
+  });
   const envVars = [
     `LOBEHUB_JWT=${shellQuote(jwt)}`,
     `LOBEHUB_SERVER=${shellQuote(serverUrl)}`,
     `LOBEHUB_ASSISTANT_MESSAGE_ID=${shellQuote(assistantMessageId)}`,
     ...(workspaceId ? [`LOBEHUB_WORKSPACE_ID=${shellQuote(workspaceId)}`] : []),
+    ...buildCredsEnvAssignments(credsEnv),
     // Inject GitHub token so CC can authenticate git operations and GitHub API
     // calls inside the sandbox (e.g. gh CLI, git push, API requests).
-    ...(githubToken ? [`GITHUB_TOKEN=${shellQuote(githubToken)}`] : []),
+    ...(githubToken
+      ? [`GITHUB_TOKEN=${shellQuote(githubToken)}`, `GH_TOKEN=${shellQuote(githubToken)}`]
+      : []),
     ...buildForwardedEnv(),
+    ...(runKey ? [`LITELLM_API_KEY=${shellQuote(runKey.key)}`] : []),
+    ...(runKey?.budgetUsd !== undefined
+      ? [`LOBEHUB_RUN_BUDGET_USD=${shellQuote(String(runKey.budgetUsd))}`]
+      : []),
   ].join(' ');
   const shellArgs = args.map(shellQuote).join(' ');
   const mainCommand = `echo ${shellQuote(base64Payload)} | base64 -d | ${envVars} ${shellArgs}`;
   // Creds first (writes ~/.creds/env + authenticates gh CLI), then repo clone.
-  const credsScript = buildCredsSetupScript(githubToken);
+  const credsScript = buildCredsSetupScript(githubToken, credsEnv);
   const repoScript = buildRepoSetupScript(repos ?? [], githubToken);
   const setupParts = [credsScript, repoScript].filter(Boolean);
   const shellCommand =

@@ -8,6 +8,10 @@ export const getSandboxConfig = () => {
     runtimeEnv: {
       HETERO_SANDBOX_AGENT_TYPES: process.env.HETERO_SANDBOX_AGENT_TYPES,
       HETERO_SANDBOX_FORWARD_ENV: process.env.HETERO_SANDBOX_FORWARD_ENV,
+      HETERO_SANDBOX_LITELLM_ADMIN_KEY: process.env.HETERO_SANDBOX_LITELLM_ADMIN_KEY,
+      HETERO_SANDBOX_LITELLM_URL: process.env.HETERO_SANDBOX_LITELLM_URL,
+      HETERO_SANDBOX_LITELLM_USER: process.env.HETERO_SANDBOX_LITELLM_USER,
+      HETERO_SANDBOX_RUN_BUDGET_USD: process.env.HETERO_SANDBOX_RUN_BUDGET_USD,
       HETERO_SANDBOX_RUN_TTL_SEC: process.env.HETERO_SANDBOX_RUN_TTL_SEC,
       ONLYBOXES_BASE_URL: process.env.ONLYBOXES_BASE_URL,
       ONLYBOXES_JIT_ISSUER: process.env.ONLYBOXES_JIT_ISSUER,
@@ -31,6 +35,28 @@ export const getSandboxConfig = () => {
        * server holds crosses into the box unless it is asked for by name.
        */
       HETERO_SANDBOX_FORWARD_ENV: z.preprocess(emptyStringToUndefined, z.string().optional()),
+      /**
+       * A LiteLLM admin key. When set together with `HETERO_SANDBOX_LITELLM_URL`,
+       * every sandbox run gets a LiteLLM key of its own, forwarded as
+       * `LITELLM_API_KEY`: LiteLLM then enforces the run's budget, and the
+       * key's spend becomes the run's cost. Stays on the server.
+       */
+      HETERO_SANDBOX_LITELLM_ADMIN_KEY: z.preprocess(
+        emptyStringToUndefined,
+        z.string().optional(),
+      ),
+      /** Base URL of the LiteLLM proxy the sandbox calls (e.g. `http://litellm:4000`). */
+      HETERO_SANDBOX_LITELLM_URL: z.preprocess(emptyStringToUndefined, z.string().url().optional()),
+      /**
+       * LiteLLM user the per-run keys belong to. A budget on that user caps
+       * all runs together (e.g. per day), on top of each run's own budget.
+       */
+      HETERO_SANDBOX_LITELLM_USER: z.preprocess(emptyStringToUndefined, z.string().optional()),
+      /** Most a single sandbox run may spend, in USD. Unset leaves runs unbudgeted. */
+      HETERO_SANDBOX_RUN_BUDGET_USD: z.preprocess(
+        emptyStringToUndefined,
+        z.coerce.number().positive().optional(),
+      ),
       /**
        * How long a sandbox run may last, in seconds: the lifetime of the token
        * the run authenticates with. Defaults to four hours. With Onlyboxes the
