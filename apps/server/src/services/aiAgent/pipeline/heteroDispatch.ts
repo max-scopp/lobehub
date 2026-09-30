@@ -409,7 +409,8 @@ export const dispatchHeteroAgent = async (
       ? marketService.market.organizations.creds({ workspaceId: deps.workspaceId })
       : marketService.market.creds;
     const list = await credsAccessor.list();
-    const creds: { id: number; key: string }[] = list.data ?? [];
+    const creds: { id: number; key: string; manifest?: Record<string, any>; type?: string }[] =
+      list.data ?? [];
     const cred = creds.find((c) => c.key === githubCredKey);
     if (cred) {
       const full = await credsAccessor.get(cred.id, { decrypt: true });
@@ -417,23 +418,23 @@ export const dispatchHeteroAgent = async (
       githubToken = vals.access_token ?? vals.token;
     }
 
-    // `get` decrypts KV credentials only. An OAuth connection (the LobeHub
-    // GitHub app among them) hands its token out through `inject` alone, which
-    // also resolves workspace credentials from the service token. Taking every
-    // credential here gives a coding agent the same services a chat agent
-    // reaches through `lobe-creds`. `sandbox: false` because the values go to
-    // our own sandbox, not Market's.
-    if (creds.length > 0) {
-      const injected = await marketService.market.creds.inject({
-        keys: creds.map((c) => c.key),
-        sandbox: false,
-        topicId,
-        userId: deps.userId,
-      });
-      credsEnv = injected.credentials?.env;
-      const githubEnvName = `${githubCredKey.toUpperCase().replaceAll(/\W/g, '_')}_ACCESS_TOKEN`;
-      githubToken ??= credsEnv?.[githubEnvName];
+    // Only KV credentials leave Market in the clear: `get` decrypts them. An
+    // OAuth connection's token (the LobeHub GitHub app among them) stays in
+    // Market, whose `inject` writes the real value into its own sandbox only
+    // and answers with masked ones. So the sandbox gets every `kv-env`
+    // credential under the name Market would inject it as, and a GitHub token
+    // stored as one stands in when the GitHub credential is an OAuth app.
+    const env: Record<string, string> = {};
+    for (const kv of creds.filter((c) => c.type === 'kv-env')) {
+      const full = await credsAccessor.get(kv.id, { decrypt: true });
+      const values: Record<string, string> = (full as any).plaintext ?? {};
+      const envMapping: Record<string, string> = kv.manifest?.envMapping ?? {};
+      for (const [name, value] of Object.entries(values)) {
+        if (value) env[envMapping[name] ?? name.toUpperCase()] = value;
+      }
     }
+    credsEnv = env;
+    githubToken ??= env.GITHUB_TOKEN ?? env.GH_TOKEN ?? env.GITHUB_ACCESS_TOKEN ?? env.GITHUB_PAT;
   } catch (err) {
     log('execAgent: failed to resolve credentials: %O', err);
   }

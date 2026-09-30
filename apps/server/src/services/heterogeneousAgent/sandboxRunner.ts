@@ -29,8 +29,8 @@ export interface SandboxRunParams {
    * to re-read topic.metadata.runningOperation on every cold Lambda start. */
   assistantMessageId: string;
   /**
-   * The user's credentials as environment variables (KV values and OAuth
-   * access tokens), the same set a chat agent reaches through `lobe-creds`.
+   * The user's `kv-env` credentials as environment variables. OAuth tokens
+   * never leave Market, so they are not among them.
    */
   credsEnv?: Record<string, string>;
   cwd?: string;
@@ -171,9 +171,10 @@ function buildCredsSetupScript(
       `{ echo ${tokenArg} | gh auth login --hostname github.com --with-token 2>/dev/null || true; }`,
       '{ gh auth setup-git 2>/dev/null || true; }',
       // Commits carry the token owner's name and noreply address unless the
-      // image already configured an identity.
-      `{ git config --global user.name >/dev/null || git config --global user.name "$(GH_TOKEN=${tokenArg} gh api user --jq '.name // .login' 2>/dev/null)" || true; }`,
-      `{ git config --global user.email >/dev/null || git config --global user.email "$(GH_TOKEN=${tokenArg} gh api user --jq '"\\(.id)+\\(.login)@users.noreply.github.com"' 2>/dev/null)" || true; }`,
+      // image already configured an identity. Only a successful lookup is
+      // used: on a 401 `gh api` prints the error body to stdout.
+      `{ git config --global user.name >/dev/null || { n=$(GH_TOKEN=${tokenArg} gh api user --jq '.name // .login' 2>/dev/null) && [ -n "$n" ] && git config --global user.name "$n"; } || true; }`,
+      `{ git config --global user.email >/dev/null || { e=$(GH_TOKEN=${tokenArg} gh api user --jq '"\\(.id)+\\(.login)@users.noreply.github.com"' 2>/dev/null) && [ -n "$e" ] && git config --global user.email "$e"; } || true; }`,
     );
   }
   return steps.join(' && \\\n');
